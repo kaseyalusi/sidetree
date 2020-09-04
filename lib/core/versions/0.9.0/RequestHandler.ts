@@ -1,3 +1,4 @@
+import Delta from './Delta';
 import Did from './Did';
 import DidState from '../../models/DidState';
 import DocumentComposer from './DocumentComposer';
@@ -9,7 +10,6 @@ import Operation from './Operation';
 import OperationModel from './models/OperationModel';
 import OperationProcessor from './OperationProcessor';
 import OperationType from '../../enums/OperationType';
-import ProtocolParameters from './ProtocolParameters';
 import Resolver from '../../Resolver';
 import ResponseModel from '../../../common/models/ResponseModel';
 import ResponseStatus from '../../../common/enums/ResponseStatus';
@@ -44,12 +44,7 @@ export default class RequestHandler implements IRequestHandler {
       if (operationRequest.type === OperationType.Create ||
           operationRequest.type === OperationType.Recover ||
           operationRequest.type === OperationType.Update) {
-        const deltaBuffer = Buffer.from(operationRequest.delta);
-        if (deltaBuffer.length > ProtocolParameters.maxDeltaSizeInBytes) {
-          const errorMessage = `operationDdata byte size of ${deltaBuffer.length} exceeded limit of ${ProtocolParameters.maxDeltaSizeInBytes}`;
-          console.info(errorMessage);
-          throw new SidetreeError(ErrorCode.RequestHandlerDeltaExceedsMaximumSize, errorMessage);
-        }
+        Delta.validateEncodedDeltaSize(operationRequest.delta);
       }
 
       operationModel = await Operation.parse(request);
@@ -137,7 +132,8 @@ export default class RequestHandler implements IRequestHandler {
     }
 
     const did = `did:${this.didMethodName}:${operationModel.didUniqueSuffix}`;
-    const document = DocumentComposer.transformToExternalDocument(didState, did);
+    const published = false;
+    const document = DocumentComposer.transformToExternalDocument(didState, did, published);
 
     return {
       status: ResponseStatus.Succeeded,
@@ -158,10 +154,15 @@ export default class RequestHandler implements IRequestHandler {
       const did = await Did.create(shortOrLongFormDid, this.didMethodName);
 
       let didState: DidState | undefined;
+      let published = false;
       if (did.isShortForm) {
         didState = await this.resolver.resolve(did.uniqueSuffix);
+
+        if (didState !== undefined) {
+          published = true;
+        }
       } else {
-        didState = await this.resolveLongFormDid(did);
+        [didState, published] = await this.resolveLongFormDid(did);
       }
 
       if (didState === undefined) {
@@ -171,7 +172,11 @@ export default class RequestHandler implements IRequestHandler {
         };
       }
 
-      const document = DocumentComposer.transformToExternalDocument(didState, shortOrLongFormDid);
+      // We reach here it means there is a DID Document to return.
+
+      // If DID is published, use the short-form DID; else use long-form DID in document.
+      const didStringToUseInDidDocument = published ? did.shortForm : did.longForm!;
+      const document = DocumentComposer.transformToExternalDocument(didState, didStringToUseInDidDocument, published);
 
       return {
         status: ResponseStatus.Succeeded,
@@ -195,22 +200,24 @@ export default class RequestHandler implements IRequestHandler {
 
   /**
    * Resolves the given long-form DID by resolving using operations found over the network first;
-   * if no operations found, the given create operation will is used to construct the DID state.
+   * if no operations found, the given create operation will be used to construct the DID state.
+   *
+   * @returns [DID state, published]
    */
-  private async resolveLongFormDid (did: Did): Promise<DidState | undefined> {
+  private async resolveLongFormDid (did: Did): Promise<[DidState | undefined, boolean]> {
     // Attempt to resolve the DID by using operations found from the network first.
     let didState = await this.resolver.resolve(did.uniqueSuffix);
 
     // If DID state found then return it.
     if (didState !== undefined) {
-      return didState;
+      return [didState, true];
     }
 
     // The code reaches here if this DID is not registered on the ledger.
 
     didState = await this.applyCreateOperation(did.createOperation!);
 
-    return didState;
+    return [didState, false];
   }
 
   private async applyCreateOperation (createOperation: OperationModel): Promise<DidState | undefined> {

@@ -40,7 +40,7 @@ import SidetreeError from '../../lib/common/SidetreeError';
 const util = require('util');
 
 describe('RequestHandler', () => {
-  // Surpress console logging during dtesting so we get a compact test summary in console.
+  // Suppress console logging during testing so we get a compact test summary in console.
   console.info = () => { return; };
   console.error = () => { return; };
   console.debug = () => { return; };
@@ -121,7 +121,7 @@ describe('RequestHandler', () => {
     expect(response).toBeDefined();
     expect(response.body.didDocument.id).toEqual(did);
 
-    // Inser the create operation into DB.
+    // Insert the create operation into DB.
     const namedAnchoredCreateOperationModel: AnchoredOperationModel = {
       didUniqueSuffix: createOperation.didUniqueSuffix,
       type: OperationType.Create,
@@ -170,7 +170,7 @@ describe('RequestHandler', () => {
     await batchScheduler.writeOperationBatch();
     expect(blockchainWriteSpy).toHaveBeenCalledTimes(1);
 
-    // Verfiy that CAS was invoked to store the chunk file.
+    // Verify that CAS was invoked to store the chunk file.
     const maxChunkFileSize = 20000000;
     const expectedBatchBuffer = await ChunkFile.createBuffer([createOperationData.createOperation], [], []);
     const expectedChunkFileHash = MockCas.getAddress(expectedBatchBuffer);
@@ -192,7 +192,7 @@ describe('RequestHandler', () => {
     const httpStatus = Response.toHttpStatus(response.status);
 
     expect(httpStatus).toEqual(400);
-    expect(response.body.code).toEqual(ErrorCode.RequestHandlerDeltaExceedsMaximumSize);
+    expect(response.body.code).toEqual(ErrorCode.DeltaExceedsMaximumSize);
   });
 
   it('should return bad request if two operations for the same DID is received.', async () => {
@@ -251,11 +251,11 @@ describe('RequestHandler', () => {
   });
 
   it('should return BadRequest given a malformed DID.', async () => {
-    const response = await requestHandler.handleResolveRequest('did:sidetree:EiAgE-q5cRcn4JHh8ETJGKqaJv1z2OgjmN3N-APx0aAvHg?bad-request-param=bad-input');
+    const response = await requestHandler.handleResolveRequest('did:sidetree:EiAgE-q5cRcn4JHh8ETJGKqaJv1z2OgjmN3N-APx0aAvHg:unused.');
     const httpStatus = Response.toHttpStatus(response.status);
 
     expect(httpStatus).toEqual(400);
-    expect(response.body.code).toEqual(ErrorCode.DidLongFormOnlyInitialStateParameterIsAllowed);
+    expect(response.body.code).toEqual(ErrorCode.DidInitialStateValueDoesNotContainTwoParts);
   });
 
   it('should respond with HTTP 200 when DID deactivate operation request is successful.', async () => {
@@ -360,7 +360,7 @@ describe('RequestHandler', () => {
   });
 
   describe('resolveLongFormDid()', async () => {
-    it('should return the resolved DID document if it is resolvable as a registered DID.', async () => {
+    it('should return the resolved DID document, and `published` value as `true` if it is resolvable as a registered DID.', async () => {
       const [anySigningPublicKey] = await OperationGenerator.generateKeyPair('anySigningKey');
       const document = {
         publicKeys: [anySigningPublicKey]
@@ -373,8 +373,9 @@ describe('RequestHandler', () => {
       };
       spyOn((requestHandler as any).resolver, 'resolve').and.returnValue(Promise.resolve(mockedResolverReturnedDidState));
 
-      const didState = await (requestHandler as any).resolveLongFormDid('unused');
+      const [didState, published] = await (requestHandler as any).resolveLongFormDid('unused');
 
+      expect(published).toEqual(true);
       expect(didState.document.publicKeys.length).toEqual(1);
       expect(didState.document.publicKeys[0].jwk).toEqual(anySigningPublicKey.jwk);
     });
